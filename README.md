@@ -59,7 +59,7 @@ go build -o ectorus .
 * `-grid` — enable explicit grid (FOUND/EXCLUDED bitsets). Memory ≈ `p^2/4` bytes.
 * `-max_lines N` — cap how many lines to process (tangents + secants).
 * `-seed_x x` — try this x first when searching a seed point.
-* `-count_first` — compute $#E(\mathbb F_p)$ by a simple **Legendre scan** ($O(p)$) to give a precise stopping target.
+* `-count_first` — compute $\#E(\mathbb F_p)$ by a simple **Legendre scan** ($O(p)$) to give a precise stopping target.
 * `-json` — JSON output (fields: `p, A, B, pointCount, complete, found[], linesProcessed`).
 
 **Current limits**
