@@ -37,20 +37,20 @@
 ```bash
 # clone this repo then:
 cd ectorus
-go build -o ectorus .
+go build -o bin/ectorus ./ectorus
 ```
 
 ### Run
 
 ```bash
 # small demo with explicit grid
-./ectorus -A 0 -B 1 -p 11 -grid -count_first
+./bin/ectorus -A 0 -B 1 -p 11 -grid -count_first
 
 # medium p, implicit mode (no grid)
-./ectorus -A 0 -B 7 -p 1009 -count_first
+./bin/ectorus -A 0 -B 7 -p 1009 -count_first
 
 # JSON output for scripting
-./ectorus -A 0 -B 1 -p 11 -count_first -json
+./bin/ectorus -A 0 -B 1 -p 11 -count_first -json
 ```
 
 **Flags**
@@ -93,11 +93,11 @@ A tiny harness that shells out to the `ectorus` binary, runs a few scenarios, pa
 
 ```bash
 # build the main tool and the bench
-go build -o ectorus .
-go build -o bench ./cmd/bench
+go build -o bin/ectorus ./ectorus
+go build -o bin/bench   ./cmd
 
 # run all built‑in scenarios once each (best‑of‑1)
-./bench -ectorus ./ectorus
+./bin/bench -ectorus ./bin/ectorus
 
 # repeat 3× and report the best time
 ./bench -ectorus ./ectorus -reps 3
