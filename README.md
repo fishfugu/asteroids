@@ -133,6 +133,6 @@ This is an informal side project intended for teaching/experimentation - and to 
 
 ## FAQ
 
-* **Does grid mode exclude the same points if I use slope `M/N` or its reduced field slope `R`?** Yes. They define the same line in $\mathbb F_p$; our line key canonicalises to `y ≡ m x + c` (or vertical), so they’re identical.
+* **Does grid mode exclude the same points if I use slope `M/N` (from the formal derivative of the equation of the curve) or its reduced field slope `R`?** Yes. They define the same line in $\mathbb F_p$; our line key canonicalises to `y ≡ m x + c` (or vertical), so they’re identical.
 * **Why does a point with `y=0` double to infinity?** That’s the 2‑torsion case; the tangent is vertical, so $2P=\mathcal O$.
 * **What happens on singular curves?** We fail early (discriminant test) because the group law formulas break at nodes/cusps.
