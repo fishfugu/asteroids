@@ -108,7 +108,7 @@ go build -o bench ./cmd/bench
 ## Design choices & trade‑offs
 
 * **Why two modes?** A $p\times p$ grid is great for intuition and demos, but memory grows as $\Theta(p^2)$. Implicit mode avoids that by never materialising candidates; it deduplicates lines/points algebraically.
-* **Counting first**: Knowing $N=\#E(\mathbb F_p)$ gives a clean stop rule (have $N-1$ finite points). We currently use a simple Legendre scan ($O(p)$); swapping in SEA later would give polylog counting.
+* **Counting first**: Knowing $N=\\#E(\mathbb F_p)$ gives a clean stop rule (have $N-1$ finite points). We currently use a simple Legendre scan ($O(p)$); swapping in SEA later would give polylog counting.
 * **Not a faster‑than‑$O(p)$ enumerator**: listing $\sim p$ points inherently costs $\Theta(p)$. This project is about clarity and experimentation, not asymptotics.
 
 ---
