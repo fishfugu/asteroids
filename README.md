@@ -93,7 +93,7 @@ A tiny harness that shells out to the `ectorus` binary, runs a few scenarios, pa
 
 ```bash
 # build the main tool and the bench
-go build -o ectorus ./ectorus
+go build -o ectorus .
 go build -o bench ./cmd/bench
 
 # run all built‑in scenarios once each (best‑of‑1)
