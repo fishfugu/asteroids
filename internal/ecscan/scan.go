@@ -11,88 +11,15 @@ import (
 	"math/bits"
 	"os"
 	"runtime"
-	"strconv"
-	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
-)
-
-type Mode int
-
-const (
-	ModeAuto Mode = iota
-	ModeTable
-	ModeOnTheFly
 )
 
 type PointU64 struct{ X, Y uint64 }
 type PointBig struct{ X, Y *big.Int }
 
 // ------------------- helpers: parsing & memory -------------------
-
-func parseBytes(s string) (uint64, error) {
-	if s == "" {
-		return 0, errors.New("empty size")
-	}
-	orig := s
-	s = strings.TrimSpace(strings.ToUpper(s))
-	mult := uint64(1)
-	switch {
-	case strings.HasSuffix(s, "KB"):
-		mult, s = 1<<10, strings.TrimSuffix(s, "KB")
-	case strings.HasSuffix(s, "MB"):
-		mult, s = 1<<20, strings.TrimSuffix(s, "MB")
-	case strings.HasSuffix(s, "GB"):
-		mult, s = 1<<30, strings.TrimSuffix(s, "GB")
-	case strings.HasSuffix(s, "TB"):
-		mult, s = 1<<40, strings.TrimSuffix(s, "TB")
-	case strings.HasSuffix(s, "K"):
-		mult, s = 1<<10, strings.TrimSuffix(s, "K")
-	case strings.HasSuffix(s, "M"):
-		mult, s = 1<<20, strings.TrimSuffix(s, "M")
-	case strings.HasSuffix(s, "G"):
-		mult, s = 1<<30, strings.TrimSuffix(s, "G")
-	}
-	s = strings.TrimSpace(s)
-	val, err := strconv.ParseFloat(s, 64)
-	if err != nil {
-		return 0, fmt.Errorf("parse size %q: %w", orig, err)
-	}
-	bytes := uint64(val * float64(mult))
-	return bytes, nil
-}
-
-func parseMode(s string) (Mode, error) {
-	switch strings.ToLower(strings.TrimSpace(s)) {
-	case "", "auto":
-		return ModeAuto, nil
-	case "table":
-		return ModeTable, nil
-	case "onthefly", "on-the-fly", "fly":
-		return ModeOnTheFly, nil
-	default:
-		return ModeAuto, fmt.Errorf("unknown mode %q", s)
-	}
-}
-
-func mustParseBig(s, name string) *big.Int {
-	if s == "" {
-		log.Fatalf("missing required %s", name)
-	}
-	n, ok := new(big.Int).SetString(s, 10)
-	if !ok {
-		log.Fatalf("invalid integer for %s: %q", name, s)
-	}
-	return n
-}
-
-func fitsUint64(z *big.Int) (uint64, bool) {
-	if z.Sign() < 0 || z.BitLen() > 64 {
-		return 0, false
-	}
-	return z.Uint64(), true
-}
 
 // ------------------- uint64 mod arithmetic (p < 2^63) -------------------
 

@@ -51,7 +51,7 @@ func Run(cfg *Config) error {
 				float64(tableBytes)/(1<<30), float64(maxMemBytes)*safety80/(1<<30))
 		}
 
-		return internalscan.enumerateU64(pu64, Au64, Bu64, toEnumMode(mode), maxMemBytes, cfg.OutPath, cfg.Workers)
+		return enumerateU64(pu64, Au64, Bu64, mode, maxMemBytes, cfg.OutPath, cfg.Workers)
 	}
 
 	// Fallback big.Int path (only on-the-fly is sensible)
@@ -63,7 +63,7 @@ func Run(cfg *Config) error {
 		mode = ModeOnTheFly
 		log.Printf("auto mode => onthefly (big.Int path)")
 	}
-	return enumerateBig(p, A, B, toEnumMode(mode), cfg.OutPath, cfg.Workers)
+	return enumerateBig(p, A, B, mode, cfg.OutPath, cfg.Workers)
 }
 
 // --- local helpers (mirror the ones used in the rest of the package) ---
