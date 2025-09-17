@@ -52,8 +52,6 @@ import (
 	"strings"
 )
 
-// ---------- small big.Int helpers ----------
-
 func parseBig(s string) (*big.Int, error) {
 	s = strings.TrimSpace(s)
 	if strings.HasPrefix(s, "0x") || strings.HasPrefix(s, "0X") {
@@ -77,10 +75,15 @@ func mod(a, p *big.Int) *big.Int {
 	}
 	return z
 }
+
 func addM(a, b, p *big.Int) *big.Int { return mod(new(big.Int).Add(a, b), p) }
+
 func subM(a, b, p *big.Int) *big.Int { return mod(new(big.Int).Sub(a, b), p) }
+
 func mulM(a, b, p *big.Int) *big.Int { return mod(new(big.Int).Mul(a, b), p) }
-func negM(a, p *big.Int) *big.Int    { return subM(new(big.Int), a, p) }
+
+func negM(a, p *big.Int) *big.Int { return subM(new(big.Int), a, p) }
+
 func invM(a, p *big.Int) (*big.Int, error) {
 	if a.Sign() == 0 {
 		return nil, errors.New("inverse of zero")
@@ -134,7 +137,7 @@ func sqrtModP(a, p *big.Int) (*big.Int, error) {
 		s++
 	}
 	// find z non-residue
-	z := big.NewInt(2)
+	z := new(big.Int).Set(big.NewInt(2))
 	for legendre(z, p) != -1 {
 		z.Add(z, big.NewInt(1))
 	}
@@ -393,6 +396,9 @@ type Engine struct {
 	KnownCount *big.Int
 
 	found       map[string]Point
+	order       []Point         // NEW: discovery order
+	indexOf     map[string]int  // NEW: for fast lookup if needed
+	deadX       map[string]bool // x where both roots (or the single y=0 root) are already known
 	linesDone   map[string]bool
 	secantDone  map[string]bool // unordered pair key "x1|y1#x2|y2"
 	tangentDone map[string]bool // by point key
@@ -413,26 +419,34 @@ func (e *Engine) pairKey(P, Q Point) string {
 	return k2 + "#" + k1
 }
 
-func (e *Engine) addFound(P Point) {
+func (e *Engine) addFound(P Point) bool {
 	if !e.C.on(P) {
-		return
+		return false
 	}
 	k := e.pointKey(P)
 	if _, ok := e.found[k]; ok {
-		return
+		return false
 	}
 	e.found[k] = P
-	if e.UseGrid && !P.Inf {
-		x := int(P.X.Int64()) % e.G.p
-		if x < 0 {
-			x += e.G.p
+	if !P.Inf {
+		if e.indexOf == nil {
+			e.indexOf = make(map[string]int)
 		}
-		y := int(P.Y.Int64()) % e.G.p
-		if y < 0 {
-			y += e.G.p
+		e.indexOf[k] = len(e.order)
+		e.order = append(e.order, P)
+		if e.UseGrid {
+			x := int(P.X.Int64()) % e.G.p
+			if x < 0 {
+				x += e.G.p
+			}
+			y := int(P.Y.Int64()) % e.G.p
+			if y < 0 {
+				y += e.G.p
+			}
+			e.G.markFound(x, y)
 		}
-		e.G.markFound(x, y)
 	}
+	return true
 }
 
 // process tangent at P or secant through P,Q; exclude other points on that line
@@ -479,29 +493,20 @@ func (e *Engine) processLineFrom(P Point, Q *Point) error {
 	return nil
 }
 
-// walkAndExclude: BFS over tangents + secants among known points, marking exclusions as we go
+// Linear pass over discovered points.
+// For point i, process: (1) its tangent, (2) secants with j in [0..i-1].
 func (e *Engine) walkAndExclude(maxLines int) error {
-	queue := []Point{}
-	queued := map[string]bool{} // NEW: tracks points we've ever enqueued
-
-	// seed the queue with already-known points (e.g., the initial seed)
-	for _, P := range e.found {
-		if !P.Inf {
-			queue = append(queue, P)
-			queued[e.pointKey(P)] = true
-		}
-	}
-
 	processed := 0
-	for len(queue) > 0 {
+	// start index at current length if this is a resume; else 0
+	for i := 0; i < len(e.order); i++ {
 		if maxLines > 0 && processed >= maxLines {
 			break
 		}
-		P := queue[0]
-		queue = queue[1:]
+
+		P := e.order[i]
 		pk := e.pointKey(P)
 
-		// Tangent once per point
+		// Tangent at P once
 		if !e.tangentDone[pk] {
 			if err := e.processLineFrom(P, nil); err != nil {
 				return err
@@ -510,9 +515,10 @@ func (e *Engine) walkAndExclude(maxLines int) error {
 			processed++
 		}
 
-		// Secants with all previously known points (unordered, once)
-		for _, Q := range e.found {
-			if Q.Inf || e.pointKey(Q) == pk {
+		// Secants P with all earlier points
+		for j := 0; j < i; j++ {
+			Q := e.order[j]
+			if Q.Inf {
 				continue
 			}
 			pair := e.pairKey(P, Q)
@@ -524,28 +530,14 @@ func (e *Engine) walkAndExclude(maxLines int) error {
 			}
 			e.secantDone[pair] = true
 			processed++
-		}
-
-		// Enqueue truly new points: anything in e.found not yet ever queued
-		for _, R := range e.found {
-			if R.Inf {
-				continue
-			}
-			rk := e.pointKey(R)
-			if !queued[rk] {
-				queue = append(queue, R)
-				queued[rk] = true
+			if maxLines > 0 && processed >= maxLines {
+				break
 			}
 		}
 
-		// Optional stop if we have all finite points
+		// Early stop if we know point count
 		if e.KnownCount != nil {
-			finite := 0
-			for _, S := range e.found {
-				if !S.Inf {
-					finite++
-				}
-			}
+			finite := len(e.order)
 			if new(big.Int).SetInt64(int64(finite)).
 				Cmp(new(big.Int).Sub(e.KnownCount, big.NewInt(1))) == 0 {
 				break
@@ -558,45 +550,48 @@ func (e *Engine) walkAndExclude(maxLines int) error {
 // findNextSeed: pick the next lattice point that is not excluded and (if on curve) not yet found.
 // For implicit mode, we just random-search x until we get a new E point not in found.
 func (e *Engine) findNextSeed() (Point, bool) {
-	if e.UseGrid {
-		p := e.G.p
-		for y := 0; y < p; y++ {
-			for x := 0; x < p; x++ {
-				if e.G.isFound(x, y) || e.G.isExcluded(x, y) {
-					continue
-				}
-				// test if on E
-				X := big.NewInt(int64(x))
-				Y := big.NewInt(int64(y))
-				P := Point{X: X, Y: Y}
-				if e.C.on(P) {
-					if _, ok := e.found[e.pointKey(P)]; !ok {
-						return P, true
-					}
-				}
-			}
+	p := e.C.P
+	tries := 0
+	for tries < 200000 {
+		x, _ := rand.Int(rand.Reader, p)
+		kx := x.String()
+		if e.deadX[kx] {
+			tries++
+			continue
 		}
-		return Point{}, false
-	}
-	// implicit search
-	for tries := 0; tries < 100000; tries++ {
-		x, _ := rand.Int(rand.Reader, e.C.P)
-		t := addM(addM(mulM(x, mulM(x, x, e.C.P), e.C.P), mulM(e.C.A, x, e.C.P), e.C.P), e.C.B, e.C.P)
-		lg := legendre(t, e.C.P)
+
+		t := addM(addM(mulM(x, mulM(x, x, p), p), mulM(e.C.A, x, p), p), e.C.B, p)
+		lg := legendre(t, p)
+		if lg == -1 {
+			tries++
+			continue
+		}
 		if lg == 0 {
 			P := Point{X: x, Y: new(big.Int)}
 			if _, ok := e.found[e.pointKey(P)]; !ok {
 				return P, true
 			}
-		} else if lg == 1 {
-			y, err := sqrtModP(t, e.C.P)
-			if err == nil {
-				P := Point{X: x, Y: y}
-				if _, ok := e.found[e.pointKey(P)]; !ok {
-					return P, true
-				}
-			}
+			e.deadX[kx] = true
+			tries++
+			continue
 		}
+		y, err := sqrtModP(t, p)
+		if err != nil {
+			tries++
+			continue
+		}
+		P1 := Point{X: x, Y: y}
+		P2 := Point{X: x, Y: negM(y, p)}
+		_, f1 := e.found[e.pointKey(P1)]
+		_, f2 := e.found[e.pointKey(P2)]
+		if !f1 {
+			return P1, true
+		}
+		if !f2 {
+			return P2, true
+		}
+		e.deadX[kx] = true
+		tries++
 	}
 	return Point{}, false
 }
@@ -604,13 +599,14 @@ func (e *Engine) findNextSeed() (Point, bool) {
 // ---------- counting ----------
 
 func countLegendre(c Curve) *big.Int {
-	cnt := big.NewInt(1) // include O
+	cnt := new(big.Int).Set(big.NewInt(1)) // include 0
 	for x := new(big.Int).SetInt64(0); x.Cmp(c.P) < 0; x.Add(x, big.NewInt(1)) {
 		t := addM(addM(mulM(x, mulM(x, x, c.P), c.P), mulM(c.A, x, c.P), c.P), c.B, c.P)
 		lg := legendre(t, c.P)
-		if lg == 0 {
+		switch lg {
+		case 0:
 			cnt.Add(cnt, big.NewInt(1))
-		} else if lg == 1 {
+		case 1:
 			cnt.Add(cnt, big.NewInt(2))
 		}
 	}
@@ -694,7 +690,7 @@ func main() {
 	}
 	if useGrid {
 		fmt.Fprintln(os.Stdout, "Creating grid memory...")
-		limit := big.NewInt(10000)
+		limit := big.NewInt(10_000)
 		if P.Cmp(limit) > 0 {
 			fmt.Fprintf(os.Stderr, "warning: -grid mode supports p ≤ %s; got p=%s. Exiting.", limit.String(), P.String())
 			os.Exit(2)
@@ -703,7 +699,7 @@ func main() {
 
 	fmt.Fprintln(os.Stdout, "Creating engine...")
 	eng := &Engine{C: curve, UseGrid: useGrid, MaxLines: maxLines, CountFirst: countFirst,
-		found: map[string]Point{}, linesDone: map[string]bool{}, secantDone: map[string]bool{}, tangentDone: map[string]bool{}}
+		found: map[string]Point{}, linesDone: map[string]bool{}, secantDone: map[string]bool{}, tangentDone: map[string]bool{}, indexOf: map[string]int{}, deadX: map[string]bool{}}
 	if useGrid {
 		pp := int(P.Int64())
 		eng.G = newGrid(pp)
