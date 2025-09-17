@@ -123,6 +123,62 @@ go build -o bin/bench   ./cmd
 
 ---
 
+## ecscan — Elliptic-curve point enumerator (parallel)
+
+`ecscan` enumerates all affine points on the curve
+\[
+y^2 \equiv x^3 + A x + B \pmod p
+\]
+and streams them to a file or stdout. It parallelises across goroutines and
+auto-selects the fastest mode for your RAM cap.
+
+### Build
+
+```bash
+go build -o bin/ecscan ./cmd/ecscan
+./bin/ecscan --p=<prime> --A=<A> --B=<B> \
+  [--mode=auto|table|onthefly] \
+  [--max-mem=48GB] \
+  [--out=points.txt] \
+  [--workers=N]
+```
+
+--mode=auto (default): uses a sqrt table if it fits under ~80% of --max-mem, otherwise on-the-fly.
+
+--mode=table: refuses to run if the estimated table (p * (4 or 8 bytes)) exceeds ~80% of --max-mem.
+
+--mode=onthefly: Euler check + Tonelli–Shanks per quadratic residue.
+
+--out: file path or - for stdout.
+
+--workers: defaults to GOMAXPROCS*4.
+
+```
+# small p, likely table mode
+./bin/ecscan --p=101 --A=2 --B=3 --max-mem=48GB --out=-
+
+# larger p with auto decision
+./bin/ecscan --p=10000019 --A=2 --B=3 --max-mem=48GB --out=points.txt
+
+# force table mode; will exit with a helpful error if it won't fit
+./bin/ecscan --p=10000019 --A=2 --B=3 --mode=table --max-mem=48GB
+
+# huge p beyond uint64: supported via big.Int path (onthefly only)
+./bin/ecscan --p=1000000000000000000000003 --A=2 --B=3 --mode=onthefly --out=-
+```
+
+Implementation notes:
+
+The CLI is a thin wrapper over internal/ecscan (ParseFlags + Run).
+
+Run decides the mode and calls a parallel engine that:
+
+Table mode: builds a sqrt table of y^2 mod p and scans x (linear time).
+
+On-the-fly: uses Legendre to skip non-residues and Tonelli–Shanks to recover y.
+
+Output: newline-delimited x y pairs; a final sentinel marks the point at infinity.
+
 ## License & attribution
 
 MIT

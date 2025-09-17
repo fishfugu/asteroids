@@ -420,6 +420,7 @@ func (e *Engine) pairKey(P, Q Point) string {
 }
 
 func (e *Engine) addFound(P Point) bool {
+	e.ensureMaps()
 	if !e.C.on(P) {
 		return false
 	}
@@ -451,6 +452,7 @@ func (e *Engine) addFound(P Point) bool {
 
 // process tangent at P or secant through P,Q; exclude other points on that line
 func (e *Engine) processLineFrom(P Point, Q *Point) error {
+	e.ensureMaps()
 	L, err := lineThrough(e.C, P, Q)
 	if err != nil {
 		return err
@@ -496,6 +498,7 @@ func (e *Engine) processLineFrom(P Point, Q *Point) error {
 // Linear pass over discovered points.
 // For point i, process: (1) its tangent, (2) secants with j in [0..i-1].
 func (e *Engine) walkAndExclude(maxLines int) error {
+	e.ensureMaps()
 	processed := 0
 	// start index at current length if this is a resume; else 0
 	for i := 0; i < len(e.order); i++ {
@@ -619,7 +622,7 @@ type Out struct {
 	P          string   `json:"p"`
 	A          string   `json:"A"`
 	B          string   `json:"B"`
-	KnownCount *big.Int `json:"pointCount,omitempty"`
+	KnownCount string   `json:"pointCount,omitempty"`
 	Complete   bool     `json:"complete"`
 	Found      []Pt     `json:"found"`
 	Lines      int      `json:"linesProcessed"`
@@ -637,6 +640,49 @@ func toPt(P Point) Pt {
 		return Pt{Inf: true}
 	}
 	return Pt{X: P.X.String(), Y: P.Y.String()}
+}
+
+// NewEngine constructs an Engine with all internal maps initialised.
+func NewEngine(curve Curve, useGrid bool, maxLines int, countFirst bool) *Engine {
+	e := &Engine{
+		C:           curve,
+		UseGrid:     useGrid,
+		MaxLines:    maxLines,
+		CountFirst:  countFirst,
+		found:       make(map[string]Point),
+		linesDone:   make(map[string]bool),
+		secantDone:  make(map[string]bool),
+		tangentDone: make(map[string]bool),
+		indexOf:     make(map[string]int),
+		deadX:       make(map[string]bool),
+	}
+	if useGrid {
+		pp := int(curve.P.Int64())
+		e.G = newGrid(pp)
+	}
+	return e
+}
+
+// ensureMaps is a defensive guard (safe if called repeatedly).
+func (e *Engine) ensureMaps() {
+	if e.found == nil {
+		e.found = make(map[string]Point)
+	}
+	if e.linesDone == nil {
+		e.linesDone = make(map[string]bool)
+	}
+	if e.secantDone == nil {
+		e.secantDone = make(map[string]bool)
+	}
+	if e.tangentDone == nil {
+		e.tangentDone = make(map[string]bool)
+	}
+	if e.indexOf == nil {
+		e.indexOf = make(map[string]int)
+	}
+	if e.deadX == nil {
+		e.deadX = make(map[string]bool)
+	}
 }
 
 // ---------- main ----------
@@ -657,7 +703,7 @@ func main() {
 	flag.StringVar(&seedXStr, "seed_x", "", "optional x to try first when finding initial seed")
 	flag.Parse()
 
-	fmt.Fprintln(os.Stdout, "Parsing input parameters...")
+	fmt.Fprintln(os.Stderr, "Parsing input parameters...")
 	A, err := parseBig(AStr)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "error: parsing value for A")
@@ -674,7 +720,7 @@ func main() {
 		die(err)
 	}
 
-	fmt.Fprintln(os.Stdout, "Checking input parameters...")
+	fmt.Fprintln(os.Stderr, "Checking input parameters...")
 	if P.Cmp(big.NewInt(3)) <= 0 {
 		dieStr("p must be > 3")
 	}
@@ -682,14 +728,14 @@ func main() {
 		fmt.Fprintln(os.Stderr, "warning: p may not be prime")
 	}
 
-	fmt.Fprintln(os.Stdout, "Creating curve...")
+	fmt.Fprintln(os.Stderr, "Creating curve...")
 	curve := Curve{P: P, A: mod(A, P), B: mod(B, P)}
 	// Early safety checks
 	if curve.isSingular() {
 		dieStr("singular curve: discriminant (4A^3+27B^2) ≡ 0 mod p")
 	}
 	if useGrid {
-		fmt.Fprintln(os.Stdout, "Creating grid memory...")
+		fmt.Fprintln(os.Stderr, "Creating grid memory...")
 		limit := big.NewInt(10_000)
 		if P.Cmp(limit) > 0 {
 			fmt.Fprintf(os.Stderr, "warning: -grid mode supports p ≤ %s; got p=%s. Exiting.", limit.String(), P.String())
@@ -697,24 +743,19 @@ func main() {
 		}
 	}
 
-	fmt.Fprintln(os.Stdout, "Creating engine...")
-	eng := &Engine{C: curve, UseGrid: useGrid, MaxLines: maxLines, CountFirst: countFirst,
-		found: map[string]Point{}, linesDone: map[string]bool{}, secantDone: map[string]bool{}, tangentDone: map[string]bool{}, indexOf: map[string]int{}, deadX: map[string]bool{}}
-	if useGrid {
-		pp := int(P.Int64())
-		eng.G = newGrid(pp)
-	}
+	fmt.Fprintln(os.Stderr, "Creating engine...")
+	eng := NewEngine(curve, useGrid, maxLines, countFirst)
 
 	// Count first if requested (O(p))
 	if eng.CountFirst {
-		fmt.Fprintln(os.Stdout, "Counting points (Legendre)...")
+		fmt.Fprintln(os.Stderr, "Counting points (Legendre)...")
 		eng.KnownCount = countLegendre(curve)
 	}
 
 	// seed
 	var seedX *big.Int
 	if seedXStr != "" {
-		fmt.Fprintln(os.Stdout, "Parsing seed...")
+		fmt.Fprintln(os.Stderr, "Parsing seed...")
 		sx, err := parseBig(seedXStr)
 		if err != nil {
 			die(err)
@@ -725,7 +766,7 @@ func main() {
 	if !ok {
 		dieStr("failed to find a seed point on E")
 	}
-	fmt.Fprintln(os.Stdout, "Found seed point on E...")
+	fmt.Fprintln(os.Stderr, "Found seed point on E...")
 	eng.addFound(seed)
 
 	// walk + exclude
@@ -748,8 +789,19 @@ func main() {
 	}
 
 	// Collate output
-	out := Out{P: P.String(), A: eng.C.A.String(), B: eng.C.B.String(), KnownCount: eng.KnownCount,
-		Complete: eng.isComplete(), Lines: linesProcessed}
+	out := Out{
+		P:        P.String(),
+		A:        eng.C.A.String(),
+		B:        eng.C.B.String(),
+		Complete: eng.isComplete(),
+		Lines:    linesProcessed,
+	}
+	if eng.KnownCount != nil {
+		out.KnownCount = eng.KnownCount.String()
+	}
+	for _, P := range eng.sortedFound() {
+		out.Found = append(out.Found, toPt(P))
+	}
 	for _, P := range eng.sortedFound() {
 		out.Found = append(out.Found, toPt(P))
 	}
@@ -764,6 +816,7 @@ func main() {
 }
 
 func (e *Engine) isComplete() bool {
+	e.ensureMaps()
 	if e.KnownCount == nil {
 		return false
 	}
@@ -798,7 +851,7 @@ func (e *Engine) sortedFound() []Point {
 }
 
 func (e *Engine) findNextSeedFromX(seedX *big.Int) (Point, bool) {
-	fmt.Fprintln(os.Stdout, "Finding next seed from X...")
+	fmt.Fprintln(os.Stderr, "Finding next seed from X...")
 	p := e.C.P
 	tryX := func(x *big.Int) (Point, bool) {
 		t := addM(addM(mulM(x, mulM(x, x, p), p), mulM(e.C.A, x, p), p), e.C.B, p)
@@ -830,8 +883,8 @@ func (e *Engine) findNextSeedFromX(seedX *big.Int) (Point, bool) {
 
 func printHuman(o Out) {
 	fmt.Printf("Curve: y^2 = x^3 + A x + B over F_p\nA = %s\nB = %s\np = %s\n\n", o.A, o.B, o.P)
-	if o.KnownCount != nil {
-		fmt.Printf("Point count (target): %s\n", o.KnownCount.String())
+	if o.KnownCount != "" {
+		fmt.Printf("Point count (target): %s\n", o.KnownCount)
 	}
 	fmt.Printf("Lines processed: %d\n", o.Lines)
 	fmt.Printf("Complete (matched target): %v\n\n", o.Complete)

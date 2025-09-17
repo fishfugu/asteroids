@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"strings"
 	"time"
 )
 
@@ -72,9 +73,11 @@ func main() {
 	var ectorusPath string
 	var reps int
 	var timeout time.Duration
+	var passArgs string
 	flag.StringVar(&ectorusPath, "ectorus", "./ectorus", "path to ectorus binary")
 	flag.IntVar(&reps, "reps", 1, "repetitions per scenario (report best)")
 	flag.DurationVar(&timeout, "timeout", 30*time.Second, "per-run timeout")
+	flag.StringVar(&passArgs, "args", "", "extra args to pass through to the child (ectorus/ecscan)")
 	flag.Parse()
 
 	if _, err := os.Stat(ectorusPath); err != nil {
@@ -83,10 +86,10 @@ func main() {
 	}
 
 	scenarios := []scenario{
-		{Name: "supersingular p=101 y^2=x^3+1 (grid)", A: "0", B: "1", P: "101", Args: []string{"-grid", "-count_first"}, Timeout: timeout},
-		{Name: "ordinary-ish p=101 A=1,B=1 (grid)", A: "1", B: "1", P: "101", Args: []string{"-grid", "-count_first"}, Timeout: timeout},
-		{Name: "implicit p=1009 A=0,B=7 (count_first)", A: "0", B: "7", P: "1009", Args: []string{"-count_first"}, Timeout: timeout},
-		{Name: "implicit p=10007 A=2,B=3 (count_first)", A: "2", B: "3", P: "10007", Args: []string{"-count_first"}, Timeout: timeout},
+		{Name: "supersingular p=101 y^2=x^3+1 (grid)", A: "0", B: "1", P: "101", Args: append(strings.Fields(passArgs), []string{"-grid", "-count_first"}...), Timeout: timeout},
+		{Name: "ordinary-ish p=101 A=1,B=1 (grid)", A: "1", B: "1", P: "101", Args: append(strings.Fields(passArgs), []string{"-grid", "-count_first"}...), Timeout: timeout},
+		{Name: "implicit p=1009 A=0,B=7 (count_first)", A: "0", B: "7", P: "1009", Args: append(strings.Fields(passArgs), []string{"-count_first"}...), Timeout: timeout},
+		{Name: "implicit p=10007 A=2,B=3 (count_first)", A: "2", B: "3", P: "10007", Args: append(strings.Fields(passArgs), []string{"-count_first"}...), Timeout: timeout},
 	}
 
 	fmt.Println("asteroids bench — running scenarios")
