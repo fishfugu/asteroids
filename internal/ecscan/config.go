@@ -27,6 +27,9 @@ type Config struct {
 	MaxMem  string // e.g. "48GB"
 	OutPath string // "-" for stdout
 	Workers int    // 0 => default
+	Vis     bool   // --vis
+	VisMax  int    // --vis-max
+	VisMode string // --vis-mode (auto|fail)
 }
 
 func ParseFlags(args []string) (*Config, error) {
@@ -41,6 +44,9 @@ func ParseFlags(args []string) (*Config, error) {
 		maxMemStr = fs.String("max-mem", "48GB", "memory cap for auto/table (e.g. 48GB, 500MB)")
 		outPath   = fs.String("out", "-", "output file path, or - for stdout")
 		workers   = fs.Int("workers", 0, "number of workers (default GOMAXPROCS*4)")
+		vis       = fs.Bool("vis", false, "render ASCII visualization to stdout after run")
+		visMax    = fs.Int("vis-max", 120, "max grid width/height for -vis")
+		visMode   = fs.String("vis-mode", "auto", "auto|fail: downsample to fit, or fail if exact grid > vis-max")
 	)
 
 	if err := fs.Parse(args); err != nil {
@@ -73,14 +79,15 @@ func ParseFlags(args []string) (*Config, error) {
 		w = runtime.GOMAXPROCS(0) * 4
 	}
 
+	vm := strings.ToLower(strings.TrimSpace(*visMode))
+	if vm != "auto" && vm != "fail" {
+		return nil, fmt.Errorf("bad --vis-mode %q (want auto|fail)", *visMode)
+	}
+
 	return &Config{
-		P:       *pStr,
-		A:       *AStr,
-		B:       *BStr,
-		Mode:    mode,
-		MaxMem:  *maxMemStr,
-		OutPath: *outPath,
-		Workers: w,
+		P: *pStr, A: *AStr, B: *BStr,
+		Mode: mode, MaxMem: *maxMemStr, OutPath: *outPath, Workers: w,
+		Vis: *vis, VisMax: *visMax, VisMode: vm,
 	}, nil
 }
 

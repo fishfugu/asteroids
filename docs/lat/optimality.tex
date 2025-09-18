@@ -1,0 +1,140 @@
+\documentclass[11pt]{article}
+\usepackage{amsmath,amsthm,amssymb,mathtools,fullpage}
+\usepackage[T1]{fontenc}
+
+\title{On the Optimality of Linear-Time Enumeration of $E(\mathbb{F}_p)$}
+\author{--- draft note ---}
+\date{}
+
+\newtheorem{theorem}{Theorem}
+\newtheorem{lemma}{Lemma}
+\newtheorem{proposition}{Proposition}
+\newtheorem{corollary}{Corollary}
+
+\newcommand{\Fp}{\mathbb{F}_p}
+\newcommand{\E}{\mathcal{E}}
+\newcommand{\leg}[2]{\left(\frac{#1}{#2}\right)}
+
+\begin{document}
+\maketitle
+
+\paragraph{Setting.}
+Fix an odd prime $p>3$ and a non-singular elliptic curve
+\[
+  \E/\Fp:\quad y^2 \equiv x^3 + A x + B \pmod p,\qquad \Delta\neq 0.
+\]
+We consider the task of enumerating all points $\E(\Fp)$.
+Write $\chi:\Fp\to\{0,\pm1\}$ for the quadratic character with $\chi(0)=0$ and $\chi(u)=\leg{u}{p}$ for $u\neq 0$.
+
+\medskip
+\noindent
+\textbf{Algorithms.} The workhorse implementation we analyse is:
+\begin{enumerate}
+  \item For each $x\in\Fp$, set $f(x)=x^3+Ax+B\in\Fp$ and compute $\chi(f(x))$.
+  \item If $\chi(f(x))=0$ output $(x,0)$. If $\chi(f(x))=1$ recover a square root $y\equiv\sqrt{f(x)}\pmod p$ and output $(x,y)$ and $(x,-y)$. If $\chi(f(x))=-1$ output nothing.
+\end{enumerate}
+Square roots are found either (i) by Tonelli–Shanks in time $\tilde O(1)$ field operations\footnote{Formally $O(\log^2 p)$ bit operations on the RAM/word-RAM; here and below $\tilde O(\cdot)$ hides polylogarithms.} when needed, or (ii) by a precomputed table (one pass over $y\in\Fp$ storing the first $y$ seen for each residue $r=y^2$).
+
+\section*{Main statements}
+
+\begin{theorem}[Output-size lower bound]\label{thm:hasse}
+For any elliptic curve $\E/\Fp$ one has
+\[
+  \#\E(\Fp) \;=\; p+1 - t,\qquad |t|\le 2\sqrt{p},
+\]
+so $\#\E(\Fp)=\Theta(p)$. In particular, any correct algorithm must \emph{produce} $\Theta(p)$ point records, hence takes $\Omega(p)$ time on any model where emitting a record costs $\Omega(1)$. 
+\end{theorem}
+
+\begin{proof}
+This is Hasse's bound; see e.g.\ \cite[Thm.~V.1.1]{SilvermanTate}. The $\Omega(p)$ lower bound is a trivial consequence of having to write $\Theta(p)$ outputs.
+\end{proof}
+
+\begin{theorem}[Decision lower bound]\label{thm:decision}
+Consider algorithms that, given $A,B\in\Fp$, may use field operations and evaluations of the quadratic character $\chi(\cdot)$ on values of their choice in $\Fp$.
+Any algorithm that always outputs \emph{exactly} $\E(\Fp)$ must perform $\Omega(p)$ distinct evaluations of $\chi(f(x))$ (or equivalent work) in the worst case.
+\end{theorem}
+
+\begin{proof}[Proof sketch (adversary/indistinguishability)]
+Fix $(A,B)$ with $\Delta\neq 0$. The set of abscissae for which $\E$ has rational points is
+\[
+  X^* \;=\; \{\,x\in\Fp:\ \chi(f(x))\in\{0,1\}\,\}.
+\]
+An algorithm that queries $\chi(f(x))$ on fewer than $p-c$ distinct $x$ leaves at least $c$ abscissae \emph{unprobed}.
+For any unprobed $x_0$ with $f(x_0)\neq 0$ one can find a constant shift $\Delta\in\Fp^\times$ such that the modified curve
+\(
+  \E_\Delta:\ y^2=x^3+Ax+(B+\Delta)
+\)
+agrees with $\E$ on all probed abscissae (i.e.\ $\chi(f(x)+\Delta)=\chi(f(x))$ for those $x$) yet \emph{flips} the quadratic character at $x_0$, i.e.\ $\chi(f(x_0)+\Delta)\neq \chi(f(x_0))$.
+(Heuristically, each constraint $\chi(f(x_i)+\Delta)=\chi(f(x_i))$ removes a factor $\approx 2$ of the admissible $\Delta$; with fewer than $p$ constraints some $\Delta$ remain.)
+Thus an algorithm that probes fewer than $p$ abscissae cannot distinguish inputs $(A,B)$ from $(A,B+\Delta)$ that induce different membership of $x_0$ in $X^*$, yet must output different point sets to be correct—contradiction. Hence $\Omega(p)$ probes are necessary.
+\end{proof}
+
+\noindent
+The (standard) proof above can be made fully rigorous using multiplicative character orthogonality to count the number of $\Delta$ satisfying the probe constraints; see e.g.\ Weil bounds for character sums.
+
+\begin{corollary}[Optimality up to polylog factors]\label{cor:optimal}
+The $x$-scan algorithm (Legendre test per $x$, plus Tonelli--Shanks or a precomputed $\sqrt{\cdot}$ table) runs in time $T(p)=\Theta(p)$ field operations with the table, or $T(p)=\Theta(p)\cdot\tilde O(1)$ without it.
+By Theorems~\ref{thm:hasse} and~\ref{thm:decision}, no correct algorithm can asymptotically improve the \emph{work} below $\Omega(p)$, hence the approach is optimal up to polylogarithmic factors and constant improvements and trivially parallelises across $x$.
+\end{corollary}
+
+\section*{Why ``line-exclusion'' cannot asymptotically help}
+
+Several practical heuristics try to exclude lattice points $(x,y)\in\Fp^2$ en masse by reasoning about lines of integral slope (including vertical and horizontal). We record two simple facts.
+
+\begin{lemma}[Vertical and horizontal lines carry no mass advantage]\label{lem:vh}
+For $\E/\Fp$ non-singular and $p>3$, each abscissa $x\in\Fp$ supports either $0$, $1$ (when $f(x)\equiv 0$), or $2$ points of $\E(\Fp)$ with that $x$-coordinate. In particular, no vertical line contains $3$ distinct affine points of $\E(\Fp)$.
+\end{lemma}
+
+\begin{proof}
+Immediate from $y^2\equiv f(x)$: for fixed $x$, $y$ is determined up to sign, with the unique $y=0$ case when $f(x)=0$.
+\end{proof}
+
+\begin{lemma}[Collinearity is a group law identity]\label{lem:collinear}
+Three affine points $P,Q,R\in \E(\Fp)$ are collinear if and only if $P+Q+R=\mathcal{O}$ in the group law. Consequently, on any fixed non-vertical line in $\Fp^2$, the number of intersections with $\E$ is at most $3$ counted with multiplicity.
+\end{lemma}
+
+\begin{proof}
+Standard; see e.g.\ \cite[Ch.~III]{SilvermanTate}.
+\end{proof}
+
+These lemmas show that any exclusion scheme driven by \emph{lines} can only infer that, once you have identified the (up to) $2$ abscissae where a line meets $\E$ besides a given point, no \emph{other} lattice point on that line belongs to $\E$.
+But to obtain those seed points, one must already solve instances of $y^2=f(x)$ for representative $x$ on that line. There is no mechanism by which line sweeps can certify large \emph{blocks} of abscissae as non-productive without, in effect, learning the quadratic character $\chi(f(x))$ for almost all $x$.
+
+We can formalise this obstruction:
+
+\begin{proposition}[Line-based exclusion cannot beat $\Theta(p)$ work]\label{prop:lines}
+Fix any algorithm that, in addition to field operations, may enumerate (and mark as excluded) all lattice points on a finite collection of $\Fp$-lines, except for the (at most three) points where the line meets $\E$.
+Then, in the worst case over $\E/\Fp$, the algorithm still must determine $\chi(f(x))$ for $\Omega(p)$ distinct abscissae $x$ to output $\E(\Fp)$ correctly.
+\end{proposition}
+
+\begin{proof}[Proof idea]
+By Lemma~\ref{lem:vh}, vertical lines never cover more than two $\E$-points per abscissa; horizontal lines likewise do not certify absence of points at a given $x$ without knowing $\chi(f(x))$.
+By Lemma~\ref{lem:collinear}, any other line contains at most $3$ points of $\E$ (counted with multiplicity); using such lines is equivalent to repeatedly applying the group law.
+In particular, ``exclusion by lines'' can only rule out lattice points \emph{conditional on} already having discovered the true intersections---which requires solving $y^2=f(x)$ at those abscissae.\footnote{If one maintains an explicit $p\times p$ grid to mark exclusions, each processed non-vertical line touches $\Theta(p)$ cells, so even a bounded number of lines already costs $\Theta(p)$ operations; if one avoids the grid, the exclusion carries no asymptotic informational gain beyond what the quadratic character per $x$ provides.}
+Thus the adversary argument of Theorem~\ref{thm:decision} applies verbatim: unless $\chi(f(x))$ is effectively learned for $\Omega(p)$ distinct $x$, one can produce two curves indistinguishable by the algorithm's probes but with different point sets on some unprobed abscissa; correctness then fails.
+\end{proof}
+
+\section*{Parallelism and memory}
+The lower bounds above are on \emph{total work}. They do not preclude strong wall-clock speedups by parallelising the independent per\,$x$ tests. Your implementation assigns ranges of $x$ to workers. With the precomputed square-root table the cost is:
+\[
+  \text{build time } \Theta(p),\quad \text{query time } \Theta(1) \text{ per } x,\quad \text{total } \Theta(p),
+\]
+which is optimal by Cor.~\ref{cor:optimal}.
+Without the table, replacing table lookups by Tonelli--Shanks gives total time $\Theta(p)\cdot\tilde O(1)$, still optimal up to polylog factors and constant improvements.
+The memory--time tradeoff is clean: the table uses $\Theta(p)$ words and removes the (rare) expensive square-root steps; when RAM is constrained, the on-the-fly variant remains optimal up to polylog factors.
+
+\paragraph{Takeaway.}
+Enumerating $E(\Fp)$ in \emph{linear work} by scanning $x\in\Fp$ and testing quadratic residuosity is optimal up to polylogarithmic factors. Line-based exclusion cannot asymptotically reduce the necessary information one must obtain (the quadratic character of $f(x)$ for almost all $x$); if implemented with an explicit grid, it is in fact $\Omega(p^2)$ in the worst case.
+
+\begin{thebibliography}{9}
+\bibitem{SilvermanTate}
+J.~H.~Silverman and J.~T.~Tate, \emph{Rational Points on Elliptic Curves}, 2nd ed., Springer, 2015. (Hasse bound; group law; basic facts.)
+
+\bibitem{Shanks}
+D.~Shanks, ``Five Number-Theoretic Algorithms,'' \emph{Proc.\ Second Manitoba Conf.\ Numer.\ Math.} (1971), pp.~51--70. (Tonelli--Shanks.)
+
+\bibitem{IrelandRosen}
+K.~Ireland and M.~Rosen, \emph{A Classical Introduction to Modern Number Theory}, 2nd ed., Springer, 1990. (Quadratic characters; orthogonality.)
+\end{thebibliography}
+
+\end{document}

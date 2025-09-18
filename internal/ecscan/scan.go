@@ -11,15 +11,21 @@ import (
 	"math/bits"
 	"os"
 	"runtime"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
 )
 
+type visMode int
+
 type PointU64 struct{ X, Y uint64 }
 type PointBig struct{ X, Y *big.Int }
 
-// ------------------- helpers: parsing & memory -------------------
+const (
+	visAuto visMode = iota
+	visFail
+)
 
 // ------------------- uint64 mod arithmetic (p < 2^63) -------------------
 
@@ -379,9 +385,197 @@ func buildSqrtTableU64(p uint64, workers int, store64 bool) (any, error) {
 	return T, nil
 }
 
+// ----------- visualisation (ASCII) ------------
+
+type visGridU64 struct {
+	p      uint64
+	maxDim int
+	mode   visMode
+	// actual grid dims (<= maxDim)
+	W, H  int
+	cells [][]bool
+}
+
+type visGridBig struct {
+	p      *big.Int
+	maxDim int
+	mode   visMode
+	W, H   int
+	cells  [][]bool
+	// scratch to avoid allocs
+	t0, t1, t2 big.Int
+}
+
+func newVisGridU64(p uint64, maxDim int, mode visMode) (*visGridU64, error) {
+	if maxDim < 8 {
+		return nil, fmt.Errorf("vis-max too small")
+	}
+	g := &visGridU64{p: p, maxDim: maxDim, mode: mode}
+	// exact grid if p fits; else downsample (auto) or fail
+	if p <= uint64(maxDim) {
+		g.W, g.H = int(p), int(p)
+	} else {
+		if mode == visFail {
+			return nil, fmt.Errorf("p=%d exceeds vis-max=%d", p, maxDim)
+		}
+		g.W, g.H = maxDim, maxDim
+	}
+	g.cells = make([][]bool, g.H)
+	for i := range g.cells {
+		g.cells[i] = make([]bool, g.W)
+	}
+	return g, nil
+}
+
+func newVisGridBig(p *big.Int, maxDim int, mode visMode) (*visGridBig, error) {
+	if maxDim < 8 {
+		return nil, fmt.Errorf("vis-max too small")
+	}
+	g := &visGridBig{p: new(big.Int).Set(p), maxDim: maxDim, mode: mode}
+	if p.BitLen() <= 63 {
+		// delegate to u64 logic via sizes
+		pu := p.Uint64()
+		if pu <= uint64(maxDim) {
+			g.W, g.H = int(pu), int(pu)
+		} else if mode == visFail {
+			return nil, fmt.Errorf("p>%d and vis-mode=fail", maxDim)
+		} else {
+			g.W, g.H = maxDim, maxDim
+		}
+	} else {
+		// very large p -> definitely downsample unless mode=fail
+		if mode == visFail {
+			return nil, fmt.Errorf("p too large for exact grid (vis-mode=fail)")
+		}
+		g.W, g.H = maxDim, maxDim
+	}
+	g.cells = make([][]bool, g.H)
+	for i := range g.cells {
+		g.cells[i] = make([]bool, g.W)
+	}
+	return g, nil
+}
+
+// ix = floor(x * W / p), integer arithmetic
+func (g *visGridBig) bucket(x, y *big.Int) (int, int) {
+	// t0 = x*W ; ix = (x*W)/p
+	g.t0.Mul(x, big.NewInt(int64(g.W)))
+	g.t1.Quo(&g.t0, g.p)
+	ix := int(g.t1.Int64())
+	if ix >= g.W {
+		ix = g.W - 1
+	}
+	if ix < 0 {
+		ix = 0
+	}
+	g.t0.Mul(y, big.NewInt(int64(g.H)))
+	g.t1.Quo(&g.t0, g.p)
+	iy := int(g.t1.Int64())
+	if iy >= g.H {
+		iy = g.H - 1
+	}
+	if iy < 0 {
+		iy = 0
+	}
+	return ix, iy
+}
+
+func (g *visGridBig) Add(x, y *big.Int) {
+	if x.Sign() < 0 || y.Sign() < 0 {
+		return
+	}
+	ix, iy := g.bucket(x, y)
+	gy := (g.H - 1) - iy
+	g.cells[gy][ix] = true
+}
+
+func (g *visGridBig) RenderTo(w *bufio.Writer) error {
+	_, _ = w.WriteString("+")
+	for i := 0; i < g.W; i++ {
+		_, _ = w.WriteString("--")
+	}
+	_, _ = w.WriteString("+\n")
+	for r := 0; r < g.H; r++ {
+		_, _ = w.WriteString("|")
+		row := g.cells[r]
+		for c := 0; c < g.W; c++ {
+			if row[c] {
+				_, _ = w.WriteString(" *")
+			} else {
+				_, _ = w.WriteString(" .")
+			}
+		}
+		_, _ = w.WriteString("|\n")
+	}
+	_, _ = w.WriteString("+")
+	for i := 0; i < g.W; i++ {
+		_, _ = w.WriteString("--")
+	}
+	_, _ = w.WriteString("+\n")
+	return w.Flush()
+}
+
+// map field coord (x,y) in [0,p) to grid (ix,iy) in [0..W-1]x[0..H-1]
+func (g *visGridU64) bucket(x, y uint64) (int, int) {
+	if g.W == int(g.p) {
+		return int(x), int(y)
+	}
+	// downsample: integer scaling
+	ix := int((x * uint64(g.W)) / g.p)
+	iy := int((y * uint64(g.H)) / g.p)
+	if ix >= g.W {
+		ix = g.W - 1
+	}
+	if iy >= g.H {
+		iy = g.H - 1
+	}
+	return ix, iy
+}
+
+func (g *visGridU64) Add(x, y uint64) {
+	// ignore infinity sentinel if it ever sneaks through
+	if x == math.MaxUint64 && y == math.MaxUint64 {
+		return
+	}
+	ix, iy := g.bucket(x, y)
+	// text row 0 at top => y grows down; field y grows up; flip vertically
+	gy := (g.H - 1) - iy
+	g.cells[gy][ix] = true
+}
+
+func (g *visGridU64) RenderTo(w *bufio.Writer) error {
+	// simple border + dots/stars
+	// top axis
+	_, _ = w.WriteString("+")
+	for i := 0; i < g.W; i++ {
+		_, _ = w.WriteString("--")
+	}
+	_, _ = w.WriteString("+\n")
+	// rows
+	for r := 0; r < g.H; r++ {
+		_, _ = w.WriteString("|")
+		row := g.cells[r]
+		for c := 0; c < g.W; c++ {
+			if row[c] {
+				_, _ = w.WriteString(" *")
+			} else {
+				_, _ = w.WriteString(" .")
+			}
+		}
+		_, _ = w.WriteString("|\n")
+	}
+	// bottom axis
+	_, _ = w.WriteString("+")
+	for i := 0; i < g.W; i++ {
+		_, _ = w.WriteString("--")
+	}
+	_, _ = w.WriteString("+\n")
+	return w.Flush()
+}
+
 // ------------------- enumeration: uint64 fast path -------------------
 
-func enumerateU64(p, A, B uint64, mode Mode, maxMem uint64, outPath string, workers int) error {
+func enumerateU64(p, A, B uint64, mode Mode, maxMem uint64, outPath string, workers int, vg *visGridU64) error {
 	// Decide table layout
 	store64 := p >= (1 << 32) // need 8B entries if y >= 2^32
 	entryBytes := uint64(4)
@@ -433,6 +627,9 @@ func enumerateU64(p, A, B uint64, mode Mode, maxMem uint64, outPath string, work
 		for pt := range points {
 			if err := w.WriteU64(pt); err != nil {
 				log.Fatalf("write error: %v", err)
+			}
+			if vg != nil {
+				vg.Add(pt.X, pt.Y)
 			}
 		}
 	}()
@@ -530,7 +727,7 @@ func enumerateU64(p, A, B uint64, mode Mode, maxMem uint64, outPath string, work
 
 // ------------------- enumeration: big.Int fallback -------------------
 
-func enumerateBig(p, A, B *big.Int, mode Mode, outPath string, workers int) error {
+func enumerateBig(p, A, B *big.Int, mode Mode, outPath string, workers int, vgBig *visGridBig) error {
 	// Only on-the-fly is viable (table would be absurd).
 	if mode == ModeTable {
 		return errors.New("table mode is not supported for big.Int p")
@@ -561,6 +758,9 @@ func enumerateBig(p, A, B *big.Int, mode Mode, outPath string, workers int) erro
 		for pt := range points {
 			if err := w.WriteBig(pt); err != nil {
 				log.Fatalf("write error: %v", err)
+			}
+			if vgBig != nil {
+				vgBig.Add(pt.X, pt.Y)
 			}
 		}
 	}()
@@ -636,19 +836,30 @@ func enumerateBig(p, A, B *big.Int, mode Mode, outPath string, workers int) erro
 
 func main() {
 	var (
-		pStr       = flag.String("p", "", "prime modulus p (decimal string, required)")
-		AStr       = flag.String("A", "0", "curve parameter A (decimal string)")
-		BStr       = flag.String("B", "0", "curve parameter B (decimal string)")
-		modeStr    = flag.String("mode", "auto", "mode: auto|table|onthefly")
-		maxMemStr  = flag.String("max-mem", "48GB", "memory cap for auto/table decisions (e.g. 48GB, 500MB)")
-		outPath    = flag.String("out", "-", "output file path, or - for stdout")
-		workersInt = flag.Int("workers", 0, "number of workers (default GOMAXPROCS*4)")
+		pStr               = flag.String("p", "", "prime modulus p (decimal string, required)")
+		AStr               = flag.String("A", "0", "curve parameter A (decimal string)")
+		BStr               = flag.String("B", "0", "curve parameter B (decimal string)")
+		modeStr            = flag.String("mode", "auto", "mode: auto|table|onthefly")
+		maxMemStr          = flag.String("max-mem", "48GB", "memory cap for auto/table decisions (e.g. 48GB, 500MB)")
+		outPath            = flag.String("out", "-", "output file path, or - for stdout")
+		workersInt         = flag.Int("workers", 0, "number of workers (default GOMAXPROCS*4)")
+		vmode      visMode = visAuto
+		visFlag            = flag.Bool("vis", false, "render an ASCII visualization of the point set to stdout (after run)")
+		visMax             = flag.Int("vis-max", 120, "maximum grid width/height for -vis; larger p is downsampled unless -vis-mode=fail")
+		visModeStr         = flag.String("vis-mode", "auto", "auto|fail: downsample to fit -vis-max, or fail if exact grid would exceed it")
+		vgU64      *visGridU64
+		vgBig      *visGridBig
 	)
 	flag.Parse()
+
+	if *visFlag && *outPath == "-" {
+		log.Fatal("vis: please set --out to a file (not '-') so the ASCII plot can be printed to stdout cleanly")
+	}
 
 	if *pStr == "" {
 		log.Fatal("missing required --p")
 	}
+
 	p := mustParseBig(*pStr, "p")
 	A := mustParseBig(*AStr, "A")
 	B := mustParseBig(*BStr, "B")
@@ -666,6 +877,31 @@ func main() {
 	workers := *workersInt
 	if workers <= 0 {
 		workers = runtime.GOMAXPROCS(0) * 4
+	}
+
+	if *visFlag {
+		if pu64, ok := fitsUint64(p); ok && pu64 < (1<<63) {
+			gg, err := newVisGridU64(pu64, *visMax, vmode)
+			if err != nil {
+				log.Fatalf("vis: %v", err)
+			}
+			vgU64 = gg
+		} else {
+			gg, err := newVisGridBig(p, *visMax, vmode)
+			if err != nil {
+				log.Fatalf("vis: %v", err)
+			}
+			vgBig = gg
+		}
+	}
+
+	switch strings.ToLower(strings.TrimSpace(*visModeStr)) {
+	case "auto":
+		vmode = visAuto
+	case "fail":
+		vmode = visFail
+	default:
+		log.Fatalf("bad --vis-mode: %q (want auto|fail)", *visModeStr)
 	}
 
 	// Fast path if p fits in uint64 and p < 2^63 (we rely on 128/64 reductions anyway)
@@ -687,8 +923,15 @@ func main() {
 			log.Printf("auto-selecting mode (table bytes ≈ %.2f GB, cap=%.2f GB)",
 				float64(tableBytes)/(1<<30), float64(maxMemBytes)/(1<<30))
 		}
-		if err := enumerateU64(pu64, Au64, Bu64, mode, maxMemBytes, *outPath, workers); err != nil {
+		if err := enumerateU64(pu64, Au64, Bu64, mode, maxMemBytes, *outPath, workers, vgU64); err != nil {
 			log.Fatal(err)
+		}
+		// render after the run, if requested
+		if *visFlag && vgU64 != nil {
+			bw := bufio.NewWriter(os.Stdout)
+			if err := vgU64.RenderTo(bw); err != nil {
+				log.Fatal(err)
+			}
 		}
 		return
 	}
@@ -697,7 +940,13 @@ func main() {
 	if mode == ModeTable {
 		log.Fatal("mode=table is not supported when p does not fit in uint64")
 	}
-	if err := enumerateBig(p, A, B, mode, *outPath, workers); err != nil {
+	if err := enumerateBig(p, A, B, mode, *outPath, workers, vgBig); err != nil {
 		log.Fatal(err)
+	}
+	if *visFlag && vgBig != nil {
+		bw := bufio.NewWriter(os.Stdout)
+		if err := vgBig.RenderTo(bw); err != nil {
+			log.Fatal(err)
+		}
 	}
 }

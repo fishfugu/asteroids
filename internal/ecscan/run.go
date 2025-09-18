@@ -1,9 +1,11 @@
 package ecscan
 
 import (
+	"bufio"
 	"fmt"
 	"log"
 	"math/big"
+	"os"
 )
 
 // safety factor for table-mode RAM check (use up to 80% of cap)
@@ -20,12 +22,21 @@ func Run(cfg *Config) error {
 		return fmt.Errorf("bad --max-mem: %v", err)
 	}
 
+	// Work out vis-mode enum
+	vm := visAuto
+	if cfg.VisMode == "fail" {
+		vm = visFail
+	}
+	if cfg.Vis && cfg.OutPath == "-" {
+		return fmt.Errorf("vis: please set --out to a file (not '-') so the ASCII plot can print to stdout")
+	}
+
 	// Fast path if p fits in uint64 and p < 2^63
 	if pu64, ok := fitsUint64(p); ok && pu64 < (1<<63) {
 		Au64, okA := fitsUint64(A)
 		Bu64, okB := fitsUint64(B)
 		if !okA || !okB {
-			return fmt.Errorf("A or B does not fit into uint64 while p does")
+			return fmt.Errorf("'A' or 'B' does not fit into uint64 while p does")
 		}
 
 		// Estimate table memory: 4B entry if p < 2^32, else 8B (store y)
@@ -51,19 +62,58 @@ func Run(cfg *Config) error {
 				float64(tableBytes)/(1<<30), float64(maxMemBytes)*safety80/(1<<30))
 		}
 
-		return enumerateU64(pu64, Au64, Bu64, mode, maxMemBytes, cfg.OutPath, cfg.Workers)
+		// Optional vis grid
+		var vg *visGridU64
+		if cfg.Vis {
+			g, err := newVisGridU64(pu64, cfg.VisMax, vm)
+			if err != nil {
+				return err
+			}
+			vg = g
+		}
+
+		if err := enumerateU64(pu64, Au64, Bu64, mode, maxMemBytes, cfg.OutPath, cfg.Workers, vg); err != nil {
+			return err
+		}
+		if cfg.Vis && vg != nil {
+			bw := bufio.NewWriter(os.Stdout)
+			if err := vg.RenderTo(bw); err != nil {
+				return err
+			}
+		}
+		return nil
 	}
 
-	// Fallback big.Int path (only on-the-fly is sensible)
+	// Big path (onthefly only)
 	if cfg.Mode == ModeTable {
 		return fmt.Errorf("mode=table is not supported when p does not fit in uint64")
 	}
+
 	mode := cfg.Mode
 	if mode == ModeAuto {
 		mode = ModeOnTheFly
 		log.Printf("auto mode => onthefly (big.Int path)")
 	}
-	return enumerateBig(p, A, B, mode, cfg.OutPath, cfg.Workers)
+
+	var vgBig *visGridBig
+	if cfg.Vis {
+		g, err := newVisGridBig(p, cfg.VisMax, vm)
+		if err != nil {
+			return err
+		}
+		vgBig = g
+	}
+
+	if err := enumerateBig(p, A, B, mode, cfg.OutPath, cfg.Workers, vgBig); err != nil {
+		return err
+	}
+	if cfg.Vis && vgBig != nil {
+		bw := bufio.NewWriter(os.Stdout)
+		if err := vgBig.RenderTo(bw); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // --- local helpers (mirror the ones used in the rest of the package) ---

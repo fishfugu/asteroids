@@ -32,7 +32,7 @@ ectorus:
 	go build $(GOFLAGS) -o $(ECTORUS) ./ectorus
 
 .PHONY: build
-build: ecscan ectorus bench
+build: ecscan ectorus bench-build
 
 # ---- dev hygiene ----
 .PHONY: test
