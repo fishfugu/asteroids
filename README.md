@@ -13,6 +13,12 @@
 
 ## What’s here
 
+Two main standalone tools:
+1. ectorus - finds points on an Elliptic Curve in Finite Field using naive (but interesing) steps - good tool for the code reader to understand the maths and steps behind the process
+2. ecscan - does the same in a more efficient, but less "accessible" way, for the code reader - more of an experiement in "how efficient can I make this for large numbers?"
+
+## ecscan — Elliptic-curve point enumerator (tangent / secant walker)
+
 * `ectorus/` — a stand‑alone Go program that:
 
   * finds a seed point on $E$ (random‑x + Legendre + Tonelli–Shanks),
@@ -30,9 +36,9 @@
 
 ---
 
-## Quick start
+### Quick start
 
-### Build
+#### Build
 
 ```bash
 # clone this repo then:
@@ -40,7 +46,7 @@ cd ectorus
 go build -o bin/ectorus ./ectorus
 ```
 
-### Run
+#### Run
 
 ```bash
 # small demo with explicit grid
@@ -69,7 +75,7 @@ go build -o bin/ectorus ./ectorus
 
 ---
 
-## What it does
+### What it does
 
 1. **Seed**: pick random $x$, compute $t = x^3 + A x + B$. If $t$ is a square (Legendre), extract $y$ (Tonelli–Shanks). That gives a point $P\in E(\mathbb F_p)$.
 2. **Lines**: for each known point (tangent) and each pair (secant), build the line modulo $p$:
@@ -85,11 +91,11 @@ This is **exploratory**: you can watch how fast exclusions shrink the candidate 
 
 ---
 
-## Benchmark helper (companion tool)
+### Benchmark helper (companion tool)
 
 A tiny harness that shells out to the `ectorus` binary, runs a few scenarios, parses its `-json` output, and prints timings.
 
-### Use the bench tool
+#### Use the bench tool
 
 ```bash
 # build the main tool and the bench
@@ -105,7 +111,7 @@ go build -o bin/bench   ./cmd
 
 ---
 
-## Design choices & trade‑offs
+### Design choices & trade‑offs
 
 * **Why two modes?** A $p\times p$ grid is great for intuition and demos, but memory grows as $\Theta(p^2)$. Implicit mode avoids that by never materialising candidates; it deduplicates lines/points algebraically.
 * **Counting first**: Knowing $N=\\#E(\mathbb F_p)$ gives a clean stop rule (have $N-1$ finite points). We currently use a simple Legendre scan ($O(p)$); swapping in SEA later would give polylog counting.
@@ -113,7 +119,7 @@ go build -o bin/bench   ./cmd
 
 ---
 
-## Roadmap (nice‑to‑haves)
+### Roadmap (nice‑to‑haves)
 
 * Replace `-count_first` scan with **SEA** (Schoof–Elkies–Atkin) backend for large primes.
 * Factor into packages: `internal/ec` (field+group ops), `internal/torus` (line/exclusion), `cmd/ectorus`.
@@ -179,7 +185,7 @@ On-the-fly: uses Legendre to skip non-residues and Tonelli–Shanks to recover y
 
 Output: newline-delimited x y pairs; a final sentinel marks the point at infinity.
 
-## License & attribution
+### License & attribution
 
 MIT
 

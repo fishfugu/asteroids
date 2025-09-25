@@ -31,4 +31,8 @@ go.work.sum
 # .idea/
 # .vscode/
 
-points.txt
+points.
+
+# Mac Stuff
+.DS_Store
+*/.DS_Store
